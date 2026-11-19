@@ -11,6 +11,12 @@
   var papel = null;       // 'dono' | 'editor' | 'leitor'
   var emRecuperacao = false;
   var abaAtual = "painel";
+  var canalAoVivo = null;
+  var sequenciaCanal = 0;
+  var realtimeConectado = false;
+  var timerAoVivo = null;
+  var revisaoAba = 0;
+  var carregandoAba = false;
 
   // ---------- utilitários ----------
   function el(tag, attrs) {
@@ -90,6 +96,9 @@
 
   // ---------- telas de acesso ----------
   function cartaoLogin(titulo, filhos) {
+    pararAoVivo();
+    revisaoAba++;
+    carregandoAba = false;
     limpar(app);
     quem.classList.add("oculto");
     var c = el("div", { class: "cartao login" }, el("h2", null, el("span", { class: "titulo", texto: titulo })));
@@ -216,6 +225,7 @@
         quem.classList.remove("oculto");
       });
       desenharShell();
+      iniciarAoVivo();
     }).catch(function (e) {
       cartaoLogin("Erro", [mensagem("erro", traduzErro(e)), el("button", { type: "button", texto: "Sair", onclick: sair })]);
     });
@@ -259,18 +269,26 @@
     });
     var corpo = document.getElementById("corpo");
     if (!corpo) return;
+    var revisao = ++revisaoAba;
+    carregandoAba = true;
     if (!silencioso) {
       limpar(corpo);
       corpo.appendChild(el("p", { class: "suave", texto: "Carregando..." }));
     }
     var aba = abas.filter(function (a) { return a.id === id; })[0];
     aba.fn().then(function (no) {
-      if (abaAtual !== id) return;
+      if (revisao !== revisaoAba || abaAtual !== id) return;
+      carregandoAba = false;
       // atualização automática não interrompe quem está assistindo ou digitando
-      if (silencioso && ocupado(corpo)) return;
+      if (silencioso && (document.hidden || ocupado(corpo))) {
+        agendarAtualizacao();
+        return;
+      }
       limpar(corpo);
       corpo.appendChild(no);
     }).catch(function (e) {
+      if (revisao !== revisaoAba || abaAtual !== id) return;
+      carregandoAba = false;
       if (silencioso) return;
       limpar(corpo);
       corpo.appendChild(mensagem("erro", "Não deu para carregar: " + traduzErro(e)));
@@ -278,21 +296,80 @@
   }
 
   function ocupado(corpo) {
-    if (corpo.querySelector("iframe")) return true;
+    // O player Twitch não expõe o estado e não tem botão para fechar: sua
+    // presença não pode impedir indefinidamente decisões vindas do Telegram.
     var v = corpo.querySelectorAll("video");
     for (var i = 0; i < v.length; i++) if (!v[i].paused) return true;
     var t = corpo.querySelectorAll("textarea, input");
     for (var k = 0; k < t.length; k++) {
       if (t[k] === document.activeElement) return true;
-      if (t[k].tagName === "TEXTAREA" && t[k].value) return true;
+      if ((t[k].tagName === "TEXTAREA" || t[k].type === "datetime-local") && t[k].value) return true;
     }
     return false;
   }
 
-  // atualiza sozinho a cada 60 s (só nas abas de dados que mudam)
+  // O estado dos filtros (fClips) continua fora do DOM ao redesenhar a aba.
+  function abaAoVivo() {
+    return ["clips", "aprovacao", "videos"].indexOf(abaAtual) >= 0;
+  }
+  function agendarAtualizacao() {
+    if (!papel || document.hidden || !abaAoVivo()) return;
+    clearTimeout(timerAoVivo);
+    timerAoVivo = setTimeout(function () {
+      timerAoVivo = null;
+      if (!papel || document.hidden || !abaAoVivo()) return;
+      var corpo = document.getElementById("corpo");
+      if (!corpo) return;
+      if (carregandoAba || ocupado(corpo)) { agendarAtualizacao(); return; }
+      abrirAba(abaAtual, true);
+    }, 1500);
+  }
+  function pararAoVivo() {
+    clearTimeout(timerAoVivo);
+    timerAoVivo = null;
+    realtimeConectado = false;
+    var antigo = canalAoVivo;
+    canalAoVivo = null;
+    if (antigo) {
+      try {
+        Promise.resolve(sb.removeChannel(antigo)).catch(function () { /* fallback continua ativo */ });
+      } catch (e) { /* fallback continua ativo */ }
+    }
+  }
+  function iniciarAoVivo() {
+    if (!papel || document.hidden || canalAoVivo) return;
+    try {
+      // O canal anterior pode ainda estar terminando a desconexão no servidor.
+      var canal = sb.channel("hub-ao-vivo-" + (++sequenciaCanal));
+      canalAoVivo = canal;
+      canal.on("postgres_changes", { event: "*", schema: "public", table: "clips" }, agendarAtualizacao)
+        .on("postgres_changes", { event: "*", schema: "public", table: "videos" }, agendarAtualizacao)
+        .subscribe(function (status) {
+          if (canalAoVivo !== canal) return;
+          realtimeConectado = status === "SUBSCRIBED";
+          // Recupera também mudanças ocorridas durante uma desconexão.
+          if (realtimeConectado) agendarAtualizacao();
+        });
+    } catch (e) {
+      pararAoVivo();
+    }
+  }
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) pararAoVivo();
+    else if (papel && document.getElementById("corpo")) {
+      iniciarAoVivo();
+      agendarAtualizacao();
+    }
+  });
+  // Sem realtime, verifica a aba aberta a cada 30 s. Não consulta em segundo plano.
   setInterval(function () {
-    if (!papel || document.hidden) return;
-    if (["clips", "aprovacao", "contas"].indexOf(abaAtual) >= 0) abrirAba(abaAtual, true);
+    if (!papel || document.hidden || realtimeConectado) return;
+    agendarAtualizacao();
+  }, 30000);
+  // As lives da aba Contas não usam a publicação realtime.
+  setInterval(function () {
+    if (!papel || document.hidden || carregandoAba) return;
+    if (abaAtual === "contas") abrirAba(abaAtual, true);
   }, 60000);
 
   function ler(q) {
@@ -783,6 +860,17 @@
     caixa.appendChild(btn);
   }
 
+  function seloTelegram(c) {
+    var obs = typeof c.obs === "string" ? c.obs : "";
+    var prefixos = ["Decidido no Telegram por ", "Horário escolhido no Telegram por "];
+    for (var i = 0; i < prefixos.length; i++) {
+      if (obs.indexOf(prefixos[i]) !== 0) continue;
+      var nome = obs.slice(prefixos[i].length).replace(/\s+\([^()]*\)\s*$/, "").trim();
+      return nome ? el("span", { class: "etiqueta", texto: "via Telegram · " + nome }) : null;
+    }
+    return null;
+  }
+
   function cartaoClip(c, nomeCanal, redesenhar) {
     var a = c.avaliacao || {};
     var sl = selo(c.nota || 0);
@@ -792,7 +880,8 @@
       el("div", { class: "linha-selos" },
         el("span", { class: "nota num " + sl.cls, texto: String(c.nota) }),
         el("span", { class: "etiqueta " + sl.cls, texto: sl.txt }),
-        a.classificacao ? el("span", { class: "etiqueta", texto: String(a.classificacao) }) : null
+        a.classificacao ? el("span", { class: "etiqueta", texto: String(a.classificacao) }) : null,
+        seloTelegram(c)
       ),
       el("h3", { class: "clip-titulo", texto: c.titulo || "Sem título" }),
       a.resumo ? el("p", { texto: String(a.resumo) }) : null,
@@ -800,6 +889,9 @@
       el("p", { class: "suave num", texto: nomeCanal + " · " + num(c.views) + " views · " + duracaoTxt(c.duracao) + " · há " + idadeTxt(c.criado_em) }),
       urlSegura(c.url) ? el("p", { class: "suave" }, link(c.url, "Abrir na Twitch")) : null
     );
+    if (c.status === "aprovado" && c.publicar_em && dataHora(c.publicar_em)) {
+      corpo.appendChild(el("p", { class: "suave", texto: "Publicação: " + dataHora(c.publicar_em) + " (Brasília)" }));
+    }
     var rodape = el("div", { class: "acoes" }, el("span", { class: "etiqueta st-clip-" + c.status, texto: ROTULO_STATUS[c.status] || c.status }));
     if (podeEditar() && ["avaliado", "recusado", "erro"].indexOf(c.status) >= 0) {
       var b = el("button", { type: "button", class: "primario", texto: "Fazer corte" });
@@ -856,7 +948,7 @@
   }
 
   function horaCurta(d) {
-    return d.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).replace(", ", " às ");
+    return d.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).replace(", ", " às ");
   }
   function blocoPublicar(c) {
     var caixa = el("div", { class: "publicar" }, el("h4", { class: "rel-sub", texto: "Quando publicar?" }));
@@ -872,7 +964,7 @@
     if (c.publicar_em) {
       var d = new Date(c.publicar_em);
       var passou = d.getTime() <= Date.now();
-      caixa.appendChild(el("p", { class: "agendado", texto: passou ? "Publicando assim que possível" : "Agendado para " + horaCurta(d) }));
+      caixa.appendChild(el("p", { class: "agendado", texto: "Agendado para " + horaCurta(d) + " (Brasília)" + (passou ? " · Publicando assim que possível" : "") }));
       if (pode) {
         var bc = el("button", { type: "button", class: "ruim", texto: "Cancelar" });
         bc.addEventListener("click", function () { agendar(null, bc); });
@@ -922,7 +1014,8 @@
     var info = el("div", { class: "aprov-info" },
       el("div", { class: "linha-selos" },
         el("span", { class: "nota num " + sl.cls, texto: c.nota == null ? "—" : String(c.nota) }),
-        el("span", { class: "etiqueta st-clip-" + c.status, texto: ROTULO_STATUS[c.status] || c.status })
+        el("span", { class: "etiqueta st-clip-" + c.status, texto: ROTULO_STATUS[c.status] || c.status }),
+        seloTelegram(c)
       ),
       el("p", { class: "suave", texto: "Canal: " + nomeCanal }),
       el("h3", { class: "clip-titulo", texto: a.titulo || c.titulo || "Sem título" }),
