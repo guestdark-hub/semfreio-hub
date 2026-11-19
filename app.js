@@ -890,6 +890,11 @@
       var capa = c.capa_path ? urls[c.capa_path] : null;
       if (capa) v.setAttribute("poster", capa);
       caixa.appendChild(v);
+    } else if (!pendente && c.capa_path && urls[c.capa_path]) {
+      // decidido: o vídeo sai do hub para economizar espaço e fica só a capa para identificar
+      caixa.appendChild(el("img", { src: urls[c.capa_path], alt: "Capa do corte",
+        style: "width:100%;max-width:260px;border-radius:10px;display:block" }));
+      caixa.appendChild(el("p", { class: "suave", texto: "Vídeo apagado do hub depois da decisão (fica só a capa)." }));
     } else {
       caixa.appendChild(el("p", { class: "suave", texto: "O vídeo do corte ainda não está disponível." }));
     }
