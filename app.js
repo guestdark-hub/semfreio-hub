@@ -553,7 +553,8 @@
     if (nota >= 90) return { txt: "Excepcional", cls: "n90" };
     if (nota >= 80) return { txt: "Excelente", cls: "n80" };
     if (nota >= 70) return { txt: "Bom", cls: "n70" };
-    return { txt: "Moderado", cls: "n60" };
+    if (nota >= 60) return { txt: "Moderado", cls: "n60" };
+    return { txt: "Baixo (testar)", cls: "n60" };
   }
   function grupoDe(c) {
     var e = c.espectadores;
@@ -682,7 +683,7 @@
   }
 
   // ---------- Clips ----------
-  var fClips = { criador: "todos", periodo: "tudo", nota: "60", status: "todos", ordem: "nota" };
+  var fClips = { criador: "todos", periodo: "tudo", nota: "45", status: "todos", ordem: "nota" };
   var ROTULO_STATUS = {
     novo: "Novo", avaliado: "Avaliado", pedido_corte: "Na fila de edição", cortando: "Cortando",
     em_aprovacao: "Aguardando aprovação", aprovado: "Aprovado", recusado: "Recusado", publicado: "Publicado", erro: "Erro no corte", descartado: "Descartado"
@@ -698,11 +699,11 @@
       }
       var nomes = {};
       queridos.forEach(function (c) { nomes[c.login] = c.nome || c.login; });
-      return ler(sb.from("clips").select("*").gt("nota", 60).neq("status", "descartado")
+      return ler(sb.from("clips").select("*").gt("nota", 45).neq("status", "descartado")
         .in("canal", queridos.map(function (c) { return c.login; })).order("nota", { ascending: false }).limit(500))
         .then(function (clips) {
           if (!clips.length) {
-            wrap.appendChild(vazio("Nenhum clipe avaliado ainda", "Os canais marcados já estão na lista. A cada hora entram os clipes com nota acima de 60."));
+            wrap.appendChild(vazio("Nenhum clipe avaliado ainda", "Os canais marcados já estão na lista. A cada 15 minutos entram clipes novos; aparecem os com nota acima de 45."));
             return wrap;
           }
           var lista = el("div", { class: "grade-clips" });
@@ -712,7 +713,7 @@
           wrap.appendChild(el("div", { class: "filtros" },
             seletor("Criador", opCriador, fClips.criador, function (v) { fClips.criador = v; desenhar(); }),
             seletor("Período", [["24", "24 h"], ["168", "7 dias"], ["720", "30 dias"], ["tudo", "Tudo"]], fClips.periodo, function (v) { fClips.periodo = v; desenhar(); }),
-            seletor("Nota mínima", [["60", "60"], ["70", "70"], ["80", "80"], ["90", "90"]], fClips.nota, function (v) { fClips.nota = v; desenhar(); }),
+            seletor("Nota mínima", [["45", "45"], ["60", "60"], ["70", "70"], ["80", "80"], ["90", "90"]], fClips.nota, function (v) { fClips.nota = v; desenhar(); }),
             seletor("Situação", [["todos", "Todas"]].concat(stats.map(function (k) { return [k, ROTULO_STATUS[k]]; })), fClips.status, function (v) { fClips.status = v; desenhar(); }),
             seletor("Ordenar por", [["nota", "Nota"], ["views", "Views"], ["recentes", "Mais recentes"]], fClips.ordem, function (v) { fClips.ordem = v; desenhar(); })
           ));
