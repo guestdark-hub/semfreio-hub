@@ -229,6 +229,7 @@
     { id: "painel", nome: "Painel", fn: abaPainel },
     { id: "clips", nome: "Clips", fn: abaClips },
     { id: "aprovacao", nome: "Aprovação", fn: abaAprovacao },
+    { id: "relatorios", nome: "Relatórios", fn: abaRelatorios },
     { id: "contas", nome: "Contas", fn: abaCanais },
     { id: "videos", nome: "Vídeos", fn: abaVideos },
     { id: "qg", nome: "QG", fn: abaQG },
@@ -876,6 +877,92 @@
       info.appendChild(el("div", { class: "acoes" }, bOk, bNo));
     }
     return el("div", { class: "cartao aprov" }, caixa, info);
+  }
+
+  // ---------- Relatórios e atualizações ----------
+  // Texto puro -> blocos (parágrafo, subtítulo, lista). Tudo com createElement/textContent.
+  function textoParaNos(texto) {
+    var linhas = String(texto || "").replace(/\r/g, "").split("\n");
+    var nos = [], par = [], lista = null, tipoLista = null;
+    function fechaPar() {
+      if (par.length) { nos.push(el("p", { class: "rel-par", texto: par.join("\n") })); par = []; }
+    }
+    function fechaLista() { if (lista) { nos.push(lista); lista = null; tipoLista = null; } }
+    function proxima(i) {
+      for (var k = i + 1; k < linhas.length; k++) if (linhas[k].trim()) return linhas[k].trim();
+      return "";
+    }
+    var reLista = /^(- |\d+\. )/;
+    linhas.forEach(function (bruta, i) {
+      var l = bruta.trim();
+      if (!l) { fechaPar(); fechaLista(); return; }
+      var ul = l.indexOf("- ") === 0, ol = /^\d+\. /.test(l);
+      if (ul || ol) {
+        fechaPar();
+        var t = ul ? "ul" : "ol";
+        if (tipoLista !== t) { fechaLista(); lista = el(t, { class: "rel-lista" }); tipoLista = t; }
+        lista.appendChild(el("li", { texto: l.replace(/^(- |\d+\. )/, "") }));
+        return;
+      }
+      fechaLista();
+      if (l.length <= 60 && !/[.!?;]$/.test(l) && reLista.test(proxima(i)) && !par.length) {
+        nos.push(el("h4", { class: "rel-sub", texto: l.replace(/:$/, "") }));
+        return;
+      }
+      par.push(l);
+    });
+    fechaPar(); fechaLista();
+    return nos;
+  }
+  function blocoTexto(texto) {
+    var d = el("div", { class: "rel-texto" });
+    textoParaNos(texto).forEach(function (n) { d.appendChild(n); });
+    return d;
+  }
+
+  function abaRelatorios() {
+    return ler(sb.from("relatorios").select("*").limit(500)).then(function (itens) {
+      var wrap = el("div");
+      wrap.appendChild(barraTopo("RELATÓRIOS E ATUALIZAÇÕES"));
+      function de(tipo) { return itens.filter(function (x) { return x.tipo === tipo; }); }
+      function porData(a, b) { return String(b.data || "").localeCompare(String(a.data || "")); }
+
+      var guia = de("guia").sort(function (a, b) { return (a.ordem || 0) - (b.ordem || 0); });
+      var cg = el("div", { class: "cartao" }, el("h2", null, el("span", { class: "titulo", texto: "Como funciona" })));
+      guia.forEach(function (g) {
+        cg.appendChild(el("div", { class: "item" }, el("h3", { texto: g.titulo }), blocoTexto(g.conteudo)));
+      });
+      if (!guia.length) cg.appendChild(el("p", { class: "suave", texto: "O guia ainda não foi enviado." }));
+      wrap.appendChild(cg);
+
+      var vers = de("versao").sort(function (a, b) { return (b.ordem || 0) - (a.ordem || 0); });
+      var cv = el("div", { class: "cartao" }, el("h2", null, el("span", { class: "titulo", texto: "Versões e mudanças" })));
+      vers.forEach(function (v) {
+        cv.appendChild(el("div", { class: "item" },
+          el("div", { class: "linha-selos" },
+            v.versao ? el("span", { class: "etiqueta n80 num", texto: "v" + String(v.versao).replace(/^v/i, "") }) : null,
+            el("span", { class: "quando", texto: v.data ? dataCurta(v.data) : "" })
+          ),
+          el("h3", { texto: v.titulo }), blocoTexto(v.conteudo)));
+      });
+      if (!vers.length) cv.appendChild(el("p", { class: "suave", texto: "Nenhuma versão registrada ainda." }));
+      wrap.appendChild(cv);
+
+      var rels = de("relatorio").sort(porData);
+      var cr = el("div", { class: "cartao" }, el("h2", null, el("span", { class: "titulo", texto: "Relatórios" })));
+      rels.forEach(function (r, i) {
+        var det = el("details", { class: "rel-det" },
+          el("summary", null,
+            el("span", { class: "quando num", texto: r.data ? dataCurta(r.data) : "" }), " ",
+            el("strong", { texto: r.titulo })),
+          blocoTexto(r.conteudo));
+        if (i === 0) det.open = true;
+        cr.appendChild(det);
+      });
+      if (!rels.length) cr.appendChild(el("p", { class: "suave", texto: "Nenhum relatório ainda. Eles aparecem aqui depois do sync." }));
+      wrap.appendChild(cr);
+      return wrap;
+    });
   }
 
   // ---------- Hub de contas (nossas contas) ----------
