@@ -1,0 +1,79 @@
+:root {
+  --asfalto: #121110;
+  --cartao: #1c1a16;
+  --borda: #302d26;
+  --texto: #f4efe3;
+  --suave: #a59f8f;
+  --amarelo: #FACC15;
+  --ruim: #f87171;
+  --bom: #4ade80;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--asfalto); color: var(--texto); }
+body { font-family: "Montserrat", system-ui, sans-serif; font-size: 15px; line-height: 1.45; overflow-x: hidden; }
+a { color: var(--amarelo); word-break: break-all; }
+h1, h2, h3 { font-family: "Anton", Impact, sans-serif; font-weight: 400; text-transform: uppercase; letter-spacing: .02em; margin: 0; }
+.titulo { display: inline-block; transform: skewX(-9deg); }
+.num { font-family: "JetBrains Mono", ui-monospace, monospace; }
+
+header.topo { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 14px 16px; }
+header.topo h1 { font-size: 28px; color: var(--amarelo); }
+.zebra { height: 10px; background: repeating-linear-gradient(-45deg, var(--amarelo) 0 12px, #121110 12px 24px); }
+.quem { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--suave); }
+
+nav.abas { display: flex; gap: 6px; padding: 12px 16px 0; overflow-x: auto; }
+nav.abas button { flex: 1 1 auto; }
+button, .btn { font: inherit; font-weight: 700; cursor: pointer; border-radius: 6px; border: 1px solid var(--borda); background: var(--cartao); color: var(--texto); padding: 9px 14px; min-height: 40px; }
+button:hover { border-color: var(--amarelo); }
+button.ativa { background: var(--amarelo); color: #121110; border-color: var(--amarelo); }
+button.primario { background: var(--amarelo); color: #121110; border-color: var(--amarelo); }
+button:disabled { opacity: .5; cursor: wait; }
+
+main { padding: 16px; max-width: 1100px; margin: 0 auto; }
+.cartao { background: var(--cartao); border: 1px solid var(--borda); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+.cartao h2 { font-size: 20px; color: var(--amarelo); margin-bottom: 12px; }
+.grade { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.totais { display: flex; gap: 18px; flex-wrap: wrap; }
+.totais div { min-width: 80px; }
+.totais .valor { font-size: 24px; font-weight: 700; display: block; }
+.totais .rotulo { font-size: 12px; color: var(--suave); text-transform: uppercase; }
+.suave { color: var(--suave); font-size: 13px; }
+
+.tabela-rolavel { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--borda); vertical-align: top; }
+th { color: var(--suave); font-size: 12px; text-transform: uppercase; }
+td.n, th.n { text-align: right; font-family: "JetBrains Mono", ui-monospace, monospace; }
+
+form { display: grid; gap: 10px; }
+label { font-size: 13px; color: var(--suave); display: grid; gap: 4px; }
+input, textarea { font: inherit; background: #121110; color: var(--texto); border: 1px solid var(--borda); border-radius: 6px; padding: 10px; width: 100%; }
+input:focus, textarea:focus { outline: 2px solid var(--amarelo); outline-offset: 0; }
+textarea { min-height: 90px; resize: vertical; }
+.login { max-width: 420px; margin: 24px auto; }
+.links-form { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; margin-top: 12px; }
+.links-form a { cursor: pointer; }
+
+.msg { padding: 10px 12px; border-radius: 6px; font-size: 14px; margin-bottom: 12px; border: 1px solid var(--borda); }
+.msg.erro { border-color: var(--ruim); color: var(--ruim); }
+.msg.ok { border-color: var(--bom); color: var(--bom); }
+.msg.aviso { border-color: var(--amarelo); color: var(--amarelo); }
+
+.etiqueta { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 12px; font-weight: 700; border: 1px solid var(--borda); }
+.st-aguardando { color: var(--suave); }
+.st-aprovado { color: var(--bom); border-color: var(--bom); }
+.st-fazendo { color: var(--amarelo); border-color: var(--amarelo); }
+.st-feito { background: var(--bom); color: #121110; border-color: var(--bom); }
+.st-recusado { color: var(--ruim); border-color: var(--ruim); }
+
+.item { border-top: 1px solid var(--borda); padding: 12px 0; }
+.item:first-child { border-top: 0; }
+.item .quando { font-size: 12px; color: var(--suave); }
+.item h3 { font-size: 17px; margin: 2px 0 4px; }
+.item p { margin: 2px 0; word-break: break-word; }
+svg.grafico { width: 100%; height: auto; display: block; }
+.oculto { display: none !important; }
+@media (max-width: 520px) {
+  header.topo h1 { font-size: 22px; }
+  main { padding: 12px; }
+}
