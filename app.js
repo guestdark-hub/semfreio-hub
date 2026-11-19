@@ -910,6 +910,23 @@
       el("h3", { class: "clip-titulo", texto: a.titulo || c.titulo || "Sem título" }),
       a.descricao ? el("p", { texto: String(a.descricao) }) : null
     );
+    var creditos = Array.isArray(a.creditos) ? a.creditos.filter(function (login) {
+      return typeof login === "string" && login.trim();
+    }) : [];
+    if (creditos.length) info.appendChild(el("p", { class: "suave", texto: "Créditos: " + creditos.map(function (login) {
+      return "@" + login.trim();
+    }).join(", ") }));
+    var fontes = Array.isArray(a.fontes) ? a.fontes.filter(function (url) {
+      return typeof url === "string" && urlSegura(url);
+    }) : [];
+    if (fontes.length) {
+      var fontesInfo = el("p", { class: "suave" }, "Fontes: ");
+      fontes.forEach(function (url, i) {
+        if (i) fontesInfo.appendChild(document.createTextNode(" · "));
+        fontesInfo.appendChild(link(url));
+      });
+      info.appendChild(fontesInfo);
+    }
     if (!pendente && c.obs) info.appendChild(el("p", { class: "suave", texto: "Observação: " + c.obs }));
     if (!pendente && c.decidido_em) info.appendChild(el("p", { class: "suave", texto: "Decidido em " + dataHora(c.decidido_em) }));
 
