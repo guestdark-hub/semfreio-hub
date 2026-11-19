@@ -422,9 +422,12 @@
       )));
       var tb = el("tbody");
       res[0].forEach(function (v) {
-        var btn = el("button", { type: "button", texto: "Baixar" });
-        btn.addEventListener("click", function () { baixar(v, btn, aviso2); });
-        if (!v.arquivo_path) btn.disabled = true;
+        // a cópia para baixar saiu do hub (economia de espaço): o vídeo fica no link "Abrir"
+        var btn = el("span", { class: "suave", texto: "—" });
+        if (v.arquivo_path) {
+          btn = el("button", { type: "button", texto: "Baixar" });
+          btn.addEventListener("click", function () { baixar(v, btn, aviso2); });
+        }
         tb.appendChild(el("tr", null,
           el("td", { texto: v.titulo || v.id }), el("td", { texto: v.streamer || "—" }), el("td", { texto: nomePlataforma(v.plataforma) }),
           el("td", { texto: dataCurta(v.data) }), el("td", null, link(v.link, "Abrir")),
