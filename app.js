@@ -819,7 +819,7 @@
 
         var wrap = el("div");
         wrap.appendChild(barraTopo("Aprovação"));
-        wrap.appendChild(el("div", { class: "msg aviso", texto: "Aprovado = pronto para subir. O Claude sobe no YouTube e no TikTok quando o dono pedir no chat." }));
+        wrap.appendChild(el("div", { class: "msg aviso", texto: "Aprovado não sobe sozinho: escolha quando publicar. O Claude publica no horário escolhido." }));
         wrap.appendChild(el("h3", { class: "sub", texto: "Esperando decisão (" + pend.length + ")" }));
         if (!pend.length) wrap.appendChild(vazio("Nada esperando aprovação", "Peça um corte na aba Clips. Quando o corte ficar pronto, ele aparece aqui."));
         pend.forEach(function (c) { wrap.appendChild(cartaoAprov(c, nomes[c.canal] || c.canal || "—", urls, true)); });
@@ -830,6 +830,52 @@
         return wrap;
       });
     });
+  }
+
+  function horaCurta(d) {
+    return d.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).replace(", ", " às ");
+  }
+  function blocoPublicar(c) {
+    var caixa = el("div", { class: "publicar" }, el("h4", { class: "rel-sub", texto: "Quando publicar?" }));
+    var erroBox = el("div");
+    var pode = podeEditar();
+    function agendar(quando, btn) {
+      if (btn) btn.disabled = true;
+      sb.rpc("agendar_publicacao", { p_clip: c.id, p_quando: quando ? quando.toISOString() : null }).then(function (r) {
+        if (r.error) { if (btn) btn.disabled = false; limpar(erroBox); erroBox.appendChild(mensagem("erro", traduzErro(r.error))); return; }
+        abrirAba("aprovacao");
+      });
+    }
+    if (c.publicar_em) {
+      var d = new Date(c.publicar_em);
+      var passou = d.getTime() <= Date.now();
+      caixa.appendChild(el("p", { class: "agendado", texto: passou ? "Publicando assim que possível" : "Agendado para " + horaCurta(d) }));
+      if (pode) {
+        var bc = el("button", { type: "button", class: "ruim", texto: "Cancelar" });
+        bc.addEventListener("click", function () { agendar(null, bc); });
+        caixa.appendChild(el("div", { class: "acoes" }, bc));
+      }
+    } else if (pode) {
+      var linha = el("div", { class: "acoes" });
+      [["Publicar agora", 0], ["Em 1 h", 1], ["Em 2 h", 2], ["Em 3 h", 3]].forEach(function (par, i) {
+        var b = el("button", { type: "button", class: i === 0 ? "primario" : "", texto: par[0] });
+        b.addEventListener("click", function () { agendar(new Date(Date.now() + par[1] * 3600000), b); });
+        linha.appendChild(b);
+      });
+      caixa.appendChild(linha);
+      var dt = el("input", { type: "datetime-local", "aria-label": "Data e hora para publicar" });
+      var bA = el("button", { type: "button", texto: "Agendar" });
+      bA.addEventListener("click", function () {
+        var q = dt.value ? new Date(dt.value) : null;
+        if (!q || isNaN(q)) { limpar(erroBox); erroBox.appendChild(mensagem("aviso", "Escolha a data e a hora.")); return; }
+        agendar(q, bA);
+      });
+      caixa.appendChild(el("div", { class: "acoes" }, dt, bA));
+    } else {
+      caixa.appendChild(el("p", { class: "suave", texto: "Ainda sem horário escolhido." }));
+    }
+    caixa.appendChild(erroBox);
+    return caixa;
   }
 
   function cartaoAprov(c, nomeCanal, urls, pendente) {
@@ -875,6 +921,20 @@
       info.appendChild(obs);
       info.appendChild(erroBox);
       info.appendChild(el("div", { class: "acoes" }, bOk, bNo));
+    }
+    if (c.status === "aprovado") info.appendChild(blocoPublicar(c));
+    if (c.status === "publicado") {
+      var ln = c.links || {};
+      var pl = el("p", { class: "suave" }, "Publicado: ");
+      var tem = false;
+      [["yt", "YouTube"], ["tt", "TikTok"]].forEach(function (par) {
+        if (ln[par[0]] && urlSegura(ln[par[0]])) {
+          if (tem) pl.appendChild(document.createTextNode(" · "));
+          pl.appendChild(link(ln[par[0]], par[1])); tem = true;
+        }
+      });
+      if (!tem) pl.appendChild(document.createTextNode("links ainda não registrados"));
+      info.appendChild(pl);
     }
     return el("div", { class: "cartao aprov" }, caixa, info);
   }

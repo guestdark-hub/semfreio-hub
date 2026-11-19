@@ -139,3 +139,8 @@ button.play { position: absolute; left: 50%; top: 50%; transform: translate(-50%
 .rel-det:first-of-type { border-top: 0; }
 .rel-det summary { cursor: pointer; min-height: 32px; }
 .rel-det[open] summary { margin-bottom: 8px; }
+
+/* ===== v4: publicar ===== */
+.publicar { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--borda); }
+.publicar .acoes input[type="datetime-local"] { width: auto; flex: 1 1 200px; }
+.agendado { color: var(--amarelo); font-weight: 700; margin: 6px 0; }
