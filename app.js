@@ -411,33 +411,51 @@
       ler(sb.from("videos").select("*").order("data", { ascending: false })),
       ler(sb.from("ultimas_metricas").select("video_id,views"))
     ]).then(function (res) {
-      var views = {};
-      res[1].forEach(function (m) { views[m.video_id] = m.views; });
-      var cart = el("div", { class: "cartao" }, el("h2", null, el("span", { class: "titulo", texto: "Vídeos postados" })));
-      var aviso2 = el("div");
-      cart.appendChild(aviso2);
-      var tab = el("table", null, el("thead", null, el("tr", null,
-        el("th", { texto: "Título" }), el("th", { texto: "Streamer" }), el("th", { texto: "Rede" }),
-        el("th", { texto: "Data" }), el("th", { texto: "Link" }), el("th", { class: "n", texto: "Views" }), el("th", { texto: "" })
-      )));
-      var tb = el("tbody");
-      res[0].forEach(function (v) {
-        // a cópia para baixar saiu do hub (economia de espaço): o vídeo fica no link "Abrir"
-        var btn = el("span", { class: "suave", texto: "—" });
-        if (v.arquivo_path) {
-          btn = el("button", { type: "button", texto: "Baixar" });
-          btn.addEventListener("click", function () { baixar(v, btn, aviso2); });
-        }
-        tb.appendChild(el("tr", null,
-          el("td", { texto: v.titulo || v.id }), el("td", { texto: v.streamer || "—" }), el("td", { texto: nomePlataforma(v.plataforma) }),
-          el("td", { texto: dataCurta(v.data) }), el("td", null, link(v.link, "Abrir")),
-          el("td", { class: "n", texto: num(views[v.id]) }), el("td", null, btn)
-        ));
+      var caminhos = Array.from(new Set(res[0].map(function (v) { return v.capa_path; }).filter(Boolean)));
+      var pUrls = caminhos.length ? sb.storage.from("videos").createSignedUrls(caminhos, 3600) : Promise.resolve({ data: [] });
+      return pUrls.catch(function () { return { data: [] }; }).then(function (rUrls) {
+        var urls = {};
+        ((rUrls && rUrls.data) || []).forEach(function (u) {
+          if (u && !u.error && u.signedUrl && urlSegura(u.signedUrl)) urls[u.path] = urlSegura(u.signedUrl);
+        });
+        var views = {};
+        res[1].forEach(function (m) { views[m.video_id] = m.views; });
+        var cart = el("div", { class: "cartao" }, el("h2", null, el("span", { class: "titulo", texto: "Vídeos postados" })));
+        var aviso2 = el("div");
+        cart.appendChild(aviso2);
+        var tab = el("table", null, el("thead", null, el("tr", null,
+          el("th", { texto: "Capa" }), el("th", { texto: "Título" }), el("th", { texto: "Streamer" }), el("th", { texto: "Rede" }),
+          el("th", { texto: "Data" }), el("th", { texto: "Link" }), el("th", { class: "n", texto: "Views" }), el("th", { texto: "" })
+        )));
+        var tb = el("tbody");
+        res[0].forEach(function (v) {
+          var capa = el("td", { texto: "—" });
+          if (urls[v.capa_path]) {
+            limpar(capa);
+            capa.appendChild(el("img", {
+              src: urls[v.capa_path], alt: v.titulo || v.id, height: "64", loading: "lazy",
+              style: "height:64px;width:auto;border-radius:8px;display:block",
+              onerror: function () { limpar(capa); capa.textContent = "—"; }
+            }));
+          }
+          // a cópia para baixar saiu do hub (economia de espaço): o vídeo fica no link "Abrir"
+          var btn = el("span", { class: "suave", texto: "—" });
+          if (v.arquivo_path) {
+            btn = el("button", { type: "button", texto: "Baixar" });
+            btn.addEventListener("click", function () { baixar(v, btn, aviso2); });
+          }
+          tb.appendChild(el("tr", null,
+            capa,
+            el("td", { texto: v.titulo || v.id }), el("td", { texto: v.streamer || "—" }), el("td", { texto: nomePlataforma(v.plataforma) }),
+            el("td", { texto: dataCurta(v.data) }), el("td", null, link(v.link, "Abrir")),
+            el("td", { class: "n", texto: num(views[v.id]) }), el("td", null, btn)
+          ));
+        });
+        if (!res[0].length) tb.appendChild(el("tr", null, el("td", { colspan: "8", texto: "Nenhum vídeo ainda." })));
+        tab.appendChild(tb);
+        cart.appendChild(el("div", { class: "tabela-rolavel" }, tab));
+        return cart;
       });
-      if (!res[0].length) tb.appendChild(el("tr", null, el("td", { colspan: "7", texto: "Nenhum vídeo ainda." })));
-      tab.appendChild(tb);
-      cart.appendChild(el("div", { class: "tabela-rolavel" }, tab));
-      return cart;
     });
   }
 
