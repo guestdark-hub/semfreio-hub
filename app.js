@@ -227,9 +227,12 @@
 
   var abas = [
     { id: "painel", nome: "Painel", fn: abaPainel },
+    { id: "clips", nome: "Clips", fn: abaClips },
+    { id: "aprovacao", nome: "Aprovação", fn: abaAprovacao },
+    { id: "contas", nome: "Contas", fn: abaCanais },
     { id: "videos", nome: "Vídeos", fn: abaVideos },
     { id: "qg", nome: "QG", fn: abaQG },
-    { id: "contas", nome: "Contas", fn: abaContas }
+    { id: "hub", nome: "Hub de contas", fn: abaContas }
   ];
 
   function desenharShell() {
@@ -248,24 +251,48 @@
     abrirAba(abaAtual);
   }
 
-  function abrirAba(id) {
+  function abrirAba(id, silencioso) {
     abaAtual = id;
     Array.prototype.forEach.call(app.querySelectorAll("nav.abas button"), function (b) {
       b.classList.toggle("ativa", b.getAttribute("data-aba") === id);
     });
     var corpo = document.getElementById("corpo");
-    limpar(corpo);
-    corpo.appendChild(el("p", { class: "suave", texto: "Carregando..." }));
+    if (!corpo) return;
+    if (!silencioso) {
+      limpar(corpo);
+      corpo.appendChild(el("p", { class: "suave", texto: "Carregando..." }));
+    }
     var aba = abas.filter(function (a) { return a.id === id; })[0];
     aba.fn().then(function (no) {
       if (abaAtual !== id) return;
+      // atualização automática não interrompe quem está assistindo ou digitando
+      if (silencioso && ocupado(corpo)) return;
       limpar(corpo);
       corpo.appendChild(no);
     }).catch(function (e) {
+      if (silencioso) return;
       limpar(corpo);
       corpo.appendChild(mensagem("erro", "Não deu para carregar: " + traduzErro(e)));
     });
   }
+
+  function ocupado(corpo) {
+    if (corpo.querySelector("iframe")) return true;
+    var v = corpo.querySelectorAll("video");
+    for (var i = 0; i < v.length; i++) if (!v[i].paused) return true;
+    var t = corpo.querySelectorAll("textarea, input");
+    for (var k = 0; k < t.length; k++) {
+      if (t[k] === document.activeElement) return true;
+      if (t[k].tagName === "TEXTAREA" && t[k].value) return true;
+    }
+    return false;
+  }
+
+  // atualiza sozinho a cada 60 s (só nas abas de dados que mudam)
+  setInterval(function () {
+    if (!papel || document.hidden) return;
+    if (["clips", "aprovacao", "contas"].indexOf(abaAtual) >= 0) abrirAba(abaAtual, true);
+  }, 60000);
 
   function ler(q) {
     return q.then(function (r) { if (r.error) throw r.error; return r.data || []; });
@@ -503,7 +530,355 @@
     return p;
   }
 
-  // ---------- Contas ----------
+
+  // ---------- ajudas das abas novas ----------
+  function podeEditar() { return papel === "dono" || papel === "editor"; }
+  function idadeTxt(iso) {
+    var t = new Date(iso).getTime();
+    if (isNaN(t)) return "—";
+    var min = Math.max(0, Math.round((Date.now() - t) / 60000));
+    if (min < 1) return "agora";
+    if (min < 60) return min + " min";
+    var h = Math.floor(min / 60);
+    if (h < 48) return h + " h" + (min % 60 && h < 10 ? " " + (min % 60) + " min" : "");
+    return Math.floor(h / 24) + " dias";
+  }
+  function duracaoTxt(seg) {
+    if (seg == null) return "—";
+    var n = Math.round(seg);
+    return Math.floor(n / 60) + ":" + ("0" + (n % 60)).slice(-2);
+  }
+  function selo(nota) {
+    if (nota >= 90) return { txt: "Excepcional", cls: "n90" };
+    if (nota >= 80) return { txt: "Excelente", cls: "n80" };
+    if (nota >= 70) return { txt: "Bom", cls: "n70" };
+    return { txt: "Moderado", cls: "n60" };
+  }
+  function grupoDe(c) {
+    var e = c.espectadores;
+    if (e == null) return null;
+    if (e < 300) return { id: "pequeno", nome: "Pequeno" };
+    if (e <= 2000) return { id: "medio", nome: "Médio" };
+    return { id: "grande", nome: "Grande" };
+  }
+  function imgSegura(url, alt, cls) {
+    var u = urlSegura(String(url || "").replace(/%?\{width\}/g, "320").replace(/%?\{height\}/g, "180"));
+    if (!u) return el("div", { class: cls + " vazio" });
+    return el("img", { src: u, alt: alt || "", class: cls, loading: "lazy", referrerpolicy: "no-referrer" });
+  }
+  function seletor(rotulo, opcoes, valor, aoMudar) {
+    var s = el("select");
+    opcoes.forEach(function (o) {
+      var op = el("option", { value: o[0], texto: o[1] });
+      if (String(o[0]) === String(valor)) op.selected = true;
+      s.appendChild(op);
+    });
+    s.addEventListener("change", function () { aoMudar(s.value); });
+    return el("label", null, rotulo, s);
+  }
+  function barraTopo(titulo) {
+    return el("div", { class: "barra-topo" },
+      el("h2", null, el("span", { class: "titulo", texto: titulo })),
+      el("button", { type: "button", texto: "Atualizar", onclick: function () { abrirAba(abaAtual); } })
+    );
+  }
+  function vazio(titulo, texto) {
+    return el("div", { class: "cartao vazio-msg" }, el("h3", { texto: titulo }), el("p", { class: "suave", texto: texto }));
+  }
+
+  // ---------- Contas (canais da Twitch) ----------
+  var fCanais = { vis: "vivo", marca: "todas", grupo: "todos", busca: "" };
+
+  function abaCanais() {
+    return ler(sb.from("canais").select("*").order("espectadores", { ascending: false, nullsFirst: false }).limit(1000)).then(function (canais) {
+      var wrap = el("div");
+      wrap.appendChild(barraTopo("Canais jogando GTA"));
+      if (!canais.length) {
+        wrap.appendChild(vazio("Ainda não há canais", "A cada hora o Claude busca canais da Twitch jogando GTA. Volte daqui a pouco."));
+        return wrap;
+      }
+      var lista = el("div", { class: "grade-canais" });
+      var cont = el("p", { class: "suave" });
+      var busca = el("input", { type: "search", placeholder: "Buscar por nome", value: fCanais.busca });
+      busca.addEventListener("input", function () { fCanais.busca = busca.value; desenhar(); });
+      wrap.appendChild(el("div", { class: "filtros" },
+        seletor("Mostrar", [["vivo", "Ao vivo"], ["todos", "Todos"]], fCanais.vis, function (v) { fCanais.vis = v; desenhar(); }),
+        seletor("Marca", [["todas", "Todas"], ["quero", "Quero cortes"], ["nao_quero", "Não quero"], ["sem", "Sem marca"]], fCanais.marca, function (v) { fCanais.marca = v; desenhar(); }),
+        seletor("Grupo", [["todos", "Todos"], ["pequeno", "Pequeno (< 300)"], ["medio", "Médio (300 a 2.000)"], ["grande", "Grande (> 2.000)"]], fCanais.grupo, function (v) { fCanais.grupo = v; desenhar(); }),
+        el("label", null, "Buscar", busca)
+      ));
+      wrap.appendChild(cont);
+      wrap.appendChild(lista);
+
+      function desenhar() {
+        limpar(lista);
+        var b = fCanais.busca.trim().toLowerCase();
+        var vis = canais.filter(function (c) {
+          if (fCanais.vis === "vivo" && !c.ao_vivo) return false;
+          if (fCanais.marca === "quero" && c.flag !== "quero") return false;
+          if (fCanais.marca === "nao_quero" && c.flag !== "nao_quero") return false;
+          if (fCanais.marca === "sem" && c.flag) return false;
+          var g = grupoDe(c);
+          if (fCanais.grupo !== "todos" && (!g || g.id !== fCanais.grupo)) return false;
+          if (b && ((c.nome || "") + " " + c.login).toLowerCase().indexOf(b) < 0) return false;
+          return true;
+        });
+        vis.sort(function (a, c) {
+          if (a.ao_vivo !== c.ao_vivo) return a.ao_vivo ? -1 : 1;
+          return (c.espectadores || 0) - (a.espectadores || 0);
+        });
+        cont.textContent = vis.length + " canal(is)";
+        if (!vis.length) lista.appendChild(el("p", { class: "suave", texto: "Nenhum canal com esses filtros." }));
+        vis.forEach(function (c) { lista.appendChild(cartaoCanal(c, desenhar)); });
+      }
+      desenhar();
+      return wrap;
+    });
+  }
+
+  function cartaoCanal(c, redesenhar) {
+    var g = grupoDe(c);
+    var capa = c.ao_vivo && urlSegura(c.thumb_url) ? imgSegura(c.thumb_url, "Miniatura da live", "canal-thumb") : null;
+    var cab = el("div", { class: "canal-cab" },
+      imgSegura(c.avatar_url, "", "avatar"),
+      el("div", { class: "canal-nome" },
+        el("strong", { texto: c.nome || c.login }),
+        el("span", { class: "suave", texto: "@" + c.login })
+      ),
+      c.ao_vivo ? el("span", { class: "etiqueta ao-vivo", texto: "AO VIVO" }) : el("span", { class: "etiqueta", texto: "Offline" })
+    );
+    var info = el("div", { class: "canal-info" });
+    if (c.ao_vivo) {
+      info.appendChild(el("p", { class: "canal-titulo", texto: c.titulo || "Sem título" }));
+      info.appendChild(el("p", { class: "suave num", texto: num(c.espectadores) + " espectadores · há " + idadeTxt(c.inicio_live) + " ao vivo" }));
+    } else {
+      info.appendChild(el("p", { class: "suave num", texto: num(c.seguidores) + " seguidores" }));
+    }
+    var linha = el("div", { class: "linha-selos" });
+    if (g) linha.appendChild(el("span", { class: "etiqueta grupo-" + g.id, texto: g.nome }));
+    linha.appendChild(link("https://www.twitch.tv/" + encodeURIComponent(c.login), "twitch.tv/" + c.login));
+    info.appendChild(linha);
+
+    var acoes = el("div", { class: "acoes" });
+    if (podeEditar()) {
+      [["quero", "Quero cortes"], ["nao_quero", "Não quero"]].forEach(function (par) {
+        var b = el("button", { type: "button", texto: par[1], class: c.flag === par[0] ? "ativa" + (par[0] === "nao_quero" ? " ruim" : "") : "" });
+        b.addEventListener("click", function () {
+          var novo = c.flag === par[0] ? null : par[0];
+          b.disabled = true;
+          sb.rpc("marcar_canal", { p_login: c.login, p_flag: novo }).then(function (r) {
+            if (r.error) { b.disabled = false; alert("Não foi possível marcar: " + traduzErro(r.error)); return; }
+            c.flag = novo;
+            redesenhar();
+          });
+        });
+        acoes.appendChild(b);
+      });
+    } else if (c.flag) {
+      acoes.appendChild(el("span", { class: "etiqueta", texto: c.flag === "quero" ? "Quero cortes" : "Não quero" }));
+    }
+    return el("div", { class: "cartao canal" + (c.flag === "nao_quero" ? " apagado" : "") + (c.flag === "quero" ? " marcado" : "") }, cab, capa, info, acoes);
+  }
+
+  // ---------- Clips ----------
+  var fClips = { criador: "todos", periodo: "tudo", nota: "60", status: "todos", ordem: "nota" };
+  var ROTULO_STATUS = {
+    novo: "Novo", avaliado: "Avaliado", pedido_corte: "Na fila de edição", cortando: "Cortando",
+    em_aprovacao: "Aguardando aprovação", aprovado: "Aprovado", recusado: "Recusado", publicado: "Publicado", erro: "Erro no corte", descartado: "Descartado"
+  };
+
+  function abaClips() {
+    return ler(sb.from("canais").select("login,nome").eq("flag", "quero")).then(function (queridos) {
+      var wrap = el("div");
+      wrap.appendChild(barraTopo("Clips para cortar"));
+      if (!queridos.length) {
+        wrap.appendChild(vazio("Nenhum canal marcado", "Marque canais como Quero cortes na aba Contas; a cada hora entram os clipes avaliados."));
+        return wrap;
+      }
+      var nomes = {};
+      queridos.forEach(function (c) { nomes[c.login] = c.nome || c.login; });
+      return ler(sb.from("clips").select("*").gt("nota", 60).neq("status", "descartado")
+        .in("canal", queridos.map(function (c) { return c.login; })).order("nota", { ascending: false }).limit(500))
+        .then(function (clips) {
+          if (!clips.length) {
+            wrap.appendChild(vazio("Nenhum clipe avaliado ainda", "Os canais marcados já estão na lista. A cada hora entram os clipes com nota acima de 60."));
+            return wrap;
+          }
+          var lista = el("div", { class: "grade-clips" });
+          var cont = el("p", { class: "suave" });
+          var opCriador = [["todos", "Todos"]].concat(queridos.map(function (c) { return [c.login, c.nome || c.login]; }));
+          var stats = Object.keys(ROTULO_STATUS).filter(function (k) { return k !== "descartado" && k !== "novo"; });
+          wrap.appendChild(el("div", { class: "filtros" },
+            seletor("Criador", opCriador, fClips.criador, function (v) { fClips.criador = v; desenhar(); }),
+            seletor("Período", [["24", "24 h"], ["168", "7 dias"], ["720", "30 dias"], ["tudo", "Tudo"]], fClips.periodo, function (v) { fClips.periodo = v; desenhar(); }),
+            seletor("Nota mínima", [["60", "60"], ["70", "70"], ["80", "80"], ["90", "90"]], fClips.nota, function (v) { fClips.nota = v; desenhar(); }),
+            seletor("Situação", [["todos", "Todas"]].concat(stats.map(function (k) { return [k, ROTULO_STATUS[k]]; })), fClips.status, function (v) { fClips.status = v; desenhar(); }),
+            seletor("Ordenar por", [["nota", "Nota"], ["views", "Views"], ["recentes", "Mais recentes"]], fClips.ordem, function (v) { fClips.ordem = v; desenhar(); })
+          ));
+          wrap.appendChild(cont);
+          wrap.appendChild(lista);
+
+          function desenhar() {
+            limpar(lista);
+            var corte = fClips.periodo === "tudo" ? 0 : Date.now() - Number(fClips.periodo) * 3600000;
+            var vis = clips.filter(function (c) {
+              if (fClips.criador !== "todos" && c.canal !== fClips.criador) return false;
+              if (corte && new Date(c.criado_em).getTime() < corte) return false;
+              if ((c.nota || 0) < Number(fClips.nota)) return false;
+              if (fClips.status !== "todos" && c.status !== fClips.status) return false;
+              return true;
+            });
+            vis.sort(function (a, b) {
+              if (fClips.ordem === "views") return (b.views || 0) - (a.views || 0);
+              if (fClips.ordem === "recentes") return new Date(b.criado_em) - new Date(a.criado_em);
+              return (b.nota || 0) - (a.nota || 0);
+            });
+            cont.textContent = vis.length + " clipe(s)";
+            if (!vis.length) lista.appendChild(el("p", { class: "suave", texto: "Nenhum clipe com esses filtros." }));
+            vis.forEach(function (c) { lista.appendChild(cartaoClip(c, nomes[c.canal] || c.canal || "—", desenhar)); });
+          }
+          desenhar();
+          return wrap;
+        });
+    });
+  }
+
+  function playerClip(c, caixa) {
+    var slug = c.embed_slug;
+    caixa.appendChild(imgSegura(c.thumb_url, "", "clip-thumb"));
+    if (!slug) return;
+    var btn = el("button", { type: "button", class: "play", "aria-label": "Assistir clipe", texto: "▶" });
+    btn.addEventListener("click", function () {
+      var f = el("iframe", {
+        src: "https://clips.twitch.tv/embed?clip=" + encodeURIComponent(slug) + "&parent=" + encodeURIComponent(location.hostname) + "&autoplay=true",
+        allowfullscreen: "true", allow: "autoplay; fullscreen", title: "Clipe", class: "clip-iframe"
+      });
+      limpar(caixa);
+      caixa.appendChild(f);
+    });
+    caixa.appendChild(btn);
+  }
+
+  function cartaoClip(c, nomeCanal, redesenhar) {
+    var a = c.avaliacao || {};
+    var sl = selo(c.nota || 0);
+    var caixa = el("div", { class: "clip-caixa" });
+    playerClip(c, caixa);
+    var corpo = el("div", { class: "clip-corpo" },
+      el("div", { class: "linha-selos" },
+        el("span", { class: "nota num " + sl.cls, texto: String(c.nota) }),
+        el("span", { class: "etiqueta " + sl.cls, texto: sl.txt }),
+        a.classificacao ? el("span", { class: "etiqueta", texto: String(a.classificacao) }) : null
+      ),
+      el("h3", { class: "clip-titulo", texto: c.titulo || "Sem título" }),
+      a.resumo ? el("p", { texto: String(a.resumo) }) : null,
+      a.gancho ? el("p", { class: "suave", texto: "Gancho: " + a.gancho }) : null,
+      el("p", { class: "suave num", texto: nomeCanal + " · " + num(c.views) + " views · " + duracaoTxt(c.duracao) + " · há " + idadeTxt(c.criado_em) }),
+      urlSegura(c.url) ? el("p", { class: "suave" }, link(c.url, "Abrir na Twitch")) : null
+    );
+    var rodape = el("div", { class: "acoes" }, el("span", { class: "etiqueta st-clip-" + c.status, texto: ROTULO_STATUS[c.status] || c.status }));
+    if (podeEditar() && ["avaliado", "recusado", "erro"].indexOf(c.status) >= 0) {
+      var b = el("button", { type: "button", class: "primario", texto: "Fazer corte" });
+      b.addEventListener("click", function () {
+        b.disabled = true;
+        sb.rpc("pedir_corte", { p_clip: c.id }).then(function (r) {
+          if (r.error) { b.disabled = false; alert("Não foi possível pedir o corte: " + traduzErro(r.error)); return; }
+          c.status = "pedido_corte";
+          redesenhar();
+        });
+      });
+      rodape.appendChild(b);
+    }
+    corpo.appendChild(rodape);
+    return el("div", { class: "cartao clip" }, caixa, corpo);
+  }
+
+  // ---------- Aprovação ----------
+  function abaAprovacao() {
+    return Promise.all([
+      ler(sb.from("clips").select("*").eq("status", "em_aprovacao").order("atualizado_em", { ascending: false }).limit(50)),
+      ler(sb.from("clips").select("*").in("status", ["aprovado", "recusado", "publicado"]).order("decidido_em", { ascending: false, nullsFirst: false }).limit(20))
+    ]).then(function (res) {
+      var pend = res[0], feitos = res[1];
+      var todos = pend.concat(feitos);
+      var logins = {};
+      todos.forEach(function (c) { if (c.canal) logins[c.canal] = 1; });
+      var caminhos = [];
+      todos.forEach(function (c) {
+        if (c.corte_path) caminhos.push(c.corte_path);
+        if (c.capa_path) caminhos.push(c.capa_path);
+      });
+      var pCanais = Object.keys(logins).length ? ler(sb.from("canais").select("login,nome").in("login", Object.keys(logins))) : Promise.resolve([]);
+      var pUrls = caminhos.length ? sb.storage.from("videos").createSignedUrls(caminhos, 3600) : Promise.resolve({ data: [] });
+      return Promise.all([pCanais, pUrls]).then(function (r2) {
+        var nomes = {};
+        r2[0].forEach(function (c) { nomes[c.login] = c.nome || c.login; });
+        var urls = {};
+        ((r2[1] && r2[1].data) || []).forEach(function (u) { if (u && u.signedUrl && urlSegura(u.signedUrl)) urls[u.path] = u.signedUrl; });
+
+        var wrap = el("div");
+        wrap.appendChild(barraTopo("Aprovação"));
+        wrap.appendChild(el("div", { class: "msg aviso", texto: "Aprovado = pronto para subir. O Claude sobe no YouTube e no TikTok quando o dono pedir no chat." }));
+        wrap.appendChild(el("h3", { class: "sub", texto: "Esperando decisão (" + pend.length + ")" }));
+        if (!pend.length) wrap.appendChild(vazio("Nada esperando aprovação", "Peça um corte na aba Clips. Quando o corte ficar pronto, ele aparece aqui."));
+        pend.forEach(function (c) { wrap.appendChild(cartaoAprov(c, nomes[c.canal] || c.canal || "—", urls, true)); });
+        if (feitos.length) {
+          wrap.appendChild(el("h3", { class: "sub", texto: "Decididos recentemente" }));
+          feitos.forEach(function (c) { wrap.appendChild(cartaoAprov(c, nomes[c.canal] || c.canal || "—", urls, false)); });
+        }
+        return wrap;
+      });
+    });
+  }
+
+  function cartaoAprov(c, nomeCanal, urls, pendente) {
+    var a = c.avaliacao || {};
+    var sl = selo(c.nota || 0);
+    var caixa = el("div", { class: "aprov-video" });
+    var vUrl = c.corte_path ? urls[c.corte_path] : null;
+    if (vUrl) {
+      var v = el("video", { controls: "controls", preload: "metadata", playsinline: "playsinline", src: vUrl });
+      var capa = c.capa_path ? urls[c.capa_path] : null;
+      if (capa) v.setAttribute("poster", capa);
+      caixa.appendChild(v);
+    } else {
+      caixa.appendChild(el("p", { class: "suave", texto: "O vídeo do corte ainda não está disponível." }));
+    }
+    var info = el("div", { class: "aprov-info" },
+      el("div", { class: "linha-selos" },
+        el("span", { class: "nota num " + sl.cls, texto: c.nota == null ? "—" : String(c.nota) }),
+        el("span", { class: "etiqueta st-clip-" + c.status, texto: ROTULO_STATUS[c.status] || c.status })
+      ),
+      el("p", { class: "suave", texto: "Canal: " + nomeCanal }),
+      el("h3", { class: "clip-titulo", texto: a.titulo || c.titulo || "Sem título" }),
+      a.descricao ? el("p", { texto: String(a.descricao) }) : null
+    );
+    if (!pendente && c.obs) info.appendChild(el("p", { class: "suave", texto: "Observação: " + c.obs }));
+    if (!pendente && c.decidido_em) info.appendChild(el("p", { class: "suave", texto: "Decidido em " + dataHora(c.decidido_em) }));
+
+    if (pendente && podeEditar()) {
+      var obs = el("textarea", { maxlength: "500", placeholder: "Observação (opcional; útil ao recusar)" });
+      var erroBox = el("div");
+      var decidir = function (ok, btn) {
+        btn.disabled = true;
+        sb.rpc("decidir_corte", { p_clip: c.id, p_aprovado: ok, p_obs: obs.value.trim() || null }).then(function (r) {
+          if (r.error) { btn.disabled = false; limpar(erroBox); erroBox.appendChild(mensagem("erro", traduzErro(r.error))); return; }
+          obs.value = "";
+          abrirAba("aprovacao");
+        });
+      };
+      var bOk = el("button", { type: "button", class: "primario", texto: "Aprovar" });
+      var bNo = el("button", { type: "button", class: "ruim", texto: "Recusar" });
+      bOk.addEventListener("click", function () { decidir(true, bOk); });
+      bNo.addEventListener("click", function () { decidir(false, bNo); });
+      info.appendChild(obs);
+      info.appendChild(erroBox);
+      info.appendChild(el("div", { class: "acoes" }, bOk, bNo));
+    }
+    return el("div", { class: "cartao aprov" }, caixa, info);
+  }
+
+  // ---------- Hub de contas (nossas contas) ----------
   function abaContas() {
     return ler(sb.from("contas").select("*").order("plataforma", { ascending: true })).then(function (contas) {
       var tab = el("table", null, el("thead", null, el("tr", null,
@@ -517,7 +892,7 @@
         ));
       });
       tab.appendChild(tb);
-      return el("div", { class: "cartao" }, el("h2", null, el("span", { class: "titulo", texto: "Contas" })),
+      return el("div", { class: "cartao" }, el("h2", null, el("span", { class: "titulo", texto: "Hub de contas" })),
         el("div", { class: "tabela-rolavel" }, tab));
     });
   }
