@@ -550,6 +550,7 @@
     return Math.floor(n / 60) + ":" + ("0" + (n % 60)).slice(-2);
   }
   function selo(nota) {
+    if (nota == null) return { txt: "Vídeo especial", cls: "n80" };   // explicador etc.: não veio de clipe, sem nota
     if (nota >= 90) return { txt: "Excepcional", cls: "n90" };
     if (nota >= 80) return { txt: "Excelente", cls: "n80" };
     if (nota >= 70) return { txt: "Bom", cls: "n70" };
@@ -881,7 +882,7 @@
 
   function cartaoAprov(c, nomeCanal, urls, pendente) {
     var a = c.avaliacao || {};
-    var sl = selo(c.nota || 0);
+    var sl = selo(c.nota);
     var caixa = el("div", { class: "aprov-video" });
     var vUrl = c.corte_path ? urls[c.corte_path] : null;
     if (vUrl) {
