@@ -247,6 +247,7 @@
     { id: "painel", nome: "Painel", fn: abaPainel },
     { id: "clips", nome: "Clips", fn: abaClips },
     { id: "aprovacao", nome: "Aprovação", fn: abaAprovacao },
+    { id: "agenda", nome: "Agenda", fn: abaAgenda },
     { id: "relatorios", nome: "Relatórios", fn: abaRelatorios },
     { id: "contas", nome: "Contas", fn: abaCanais },
     { id: "videos", nome: "Vídeos", fn: abaVideos },
@@ -318,7 +319,7 @@
 
   // O estado dos filtros (fClips) continua fora do DOM ao redesenhar a aba.
   function abaAoVivo() {
-    return ["clips", "aprovacao", "videos"].indexOf(abaAtual) >= 0;
+    return ["clips", "aprovacao", "videos", "agenda"].indexOf(abaAtual) >= 0;
   }
   function agendarAtualizacao() {
     if (!papel || document.hidden || !abaAoVivo()) return;
@@ -940,7 +941,9 @@
   function abaAprovacao() {
     return Promise.all([
       ler(sb.from("clips").select("*").eq("status", "em_aprovacao").order("atualizado_em", { ascending: false }).limit(50)),
-      ler(sb.from("clips").select("*").in("status", ["aprovado", "recusado", "publicado"]).order("decidido_em", { ascending: false, nullsFirst: false }).limit(20))
+      ler(sb.from("clips").select("*").in("status", ["aprovado", "recusado", "publicado"]).order("decidido_em", { ascending: false, nullsFirst: false }).limit(20)),
+      // só para o selo da conta: sem contas (ou banco sem o schema_v10) a aba abre do mesmo jeito
+      ler(sb.from("contas").select("*")).catch(function () { return []; })
     ]).then(function (res) {
       var pend = res[0], feitos = res[1];
       var todos = pend.concat(feitos);
@@ -961,13 +964,13 @@
 
         var wrap = el("div");
         wrap.appendChild(barraTopo("Aprovação"));
-        wrap.appendChild(el("div", { class: "msg aviso", texto: "Aprovado não sobe sozinho: escolha quando publicar. O Claude publica no horário escolhido." }));
+        wrap.appendChild(el("div", { class: "msg aviso", texto: "Aprovado não sobe sozinho: escolha quando publicar. O Claude publica no horário escolhido, em uma conta por rede (selo no cartão)." }));
         wrap.appendChild(el("h3", { class: "sub", texto: "Esperando decisão (" + pend.length + ")" }));
         if (!pend.length) wrap.appendChild(vazio("Nada esperando aprovação", "Peça um corte na aba Clips. Quando o corte ficar pronto, ele aparece aqui."));
-        pend.forEach(function (c) { wrap.appendChild(cartaoAprov(c, nomes[c.canal] || c.canal || "—", urls, true)); });
+        pend.forEach(function (c) { wrap.appendChild(cartaoAprov(c, nomes[c.canal] || c.canal || "—", urls, true, res[2])); });
         if (feitos.length) {
           wrap.appendChild(el("h3", { class: "sub", texto: "Decididos recentemente" }));
-          feitos.forEach(function (c) { wrap.appendChild(cartaoAprov(c, nomes[c.canal] || c.canal || "—", urls, false)); });
+          feitos.forEach(function (c) { wrap.appendChild(cartaoAprov(c, nomes[c.canal] || c.canal || "—", urls, false, res[2])); });
         }
         return wrap;
       });
@@ -1020,7 +1023,57 @@
     return caixa;
   }
 
-  function cartaoAprov(c, nomeCanal, urls, pendente) {
+  // clips.contas = { rede: id da conta } (uma conta por rede), gravado pelo distribuir_contas.py
+  var ORDEM_REDES = ["youtube", "tiktok", "kwai"];
+  function destinosDe(c) {
+    var d = c && c.contas;
+    return d && typeof d === "object" && !Array.isArray(d) ? d : {};
+  }
+  function idsDestino(c) {
+    var d = destinosDe(c);
+    return Object.keys(d).filter(function (r) { return d[r]; }).map(function (r) { return String(d[r]); });
+  }
+  // Selo "Rede · Conta" de cada destino; só texto (textContent).
+  function selosContas(c, contas) {
+    var destinos = destinosDe(c);
+    var redes = Object.keys(destinos).filter(function (r) { return destinos[r]; }).sort(function (a, b) {
+      return (ORDEM_REDES.indexOf(a) + 1 || 99) - (ORDEM_REDES.indexOf(b) + 1 || 99);
+    });
+    if (!redes.length) {
+      // pendente ainda não tem conta; publicado antigo saiu antes da distribuição por contas
+      return c.status === "aprovado" ? el("div", { class: "linha-selos" },
+        el("span", { class: "etiqueta", texto: "Conta: aguardando a distribuição (até 15 min)" })) : null;
+    }
+    var porId = {};
+    (contas || []).forEach(function (x) { if (x && x.id != null) porId[x.id] = x; });
+    var linha = el("div", { class: "linha-selos" });
+    redes.forEach(function (rede) {
+      var id = String(destinos[rede]);
+      var conta = porId[id];
+      linha.appendChild(el("span", {
+        class: "etiqueta", title: conta && conta.handle ? String(conta.handle) : id,
+        texto: nomePlataforma(rede) + " · " + (conta ? String(conta.nome || conta.handle || id) : id)
+      }));
+    });
+    return linha;
+  }
+  // marcar_publicado.py grava links.youtube/links.tiktok; versões antigas usavam yt/tt.
+  function linksPublicados(c) {
+    var ln = c.links && typeof c.links === "object" ? c.links : {};
+    var p = el("p", { class: "suave" }, "Publicado: ");
+    var tem = false;
+    [["youtube", "yt", "YouTube"], ["tiktok", "tt", "TikTok"], ["kwai", "kw", "Kwai"]].forEach(function (par) {
+      var u = urlSegura(ln[par[0]]) || urlSegura(ln[par[1]]);
+      if (!u) return;
+      if (tem) p.appendChild(document.createTextNode(" · "));
+      p.appendChild(link(u, par[2]));
+      tem = true;
+    });
+    if (!tem) p.appendChild(document.createTextNode("links ainda não registrados"));
+    return p;
+  }
+
+  function cartaoAprov(c, nomeCanal, urls, pendente, contas) {
     var a = c.avaliacao || {};
     var sl = selo(c.nota);
     var caixa = el("div", { class: "aprov-video" });
@@ -1044,6 +1097,7 @@
         el("span", { class: "etiqueta st-clip-" + c.status, texto: ROTULO_STATUS[c.status] || c.status }),
         seloTelegram(c)
       ),
+      selosContas(c, contas || []),
       el("p", { class: "suave", texto: "Canal: " + nomeCanal }),
       el("h3", { class: "clip-titulo", texto: a.titulo || c.titulo || "Sem título" }),
       a.descricao ? el("p", { texto: String(a.descricao) }) : null
@@ -1088,19 +1142,7 @@
       info.appendChild(el("div", { class: "acoes" }, bOk, bNo));
     }
     if (c.status === "aprovado") info.appendChild(blocoPublicar(c));
-    if (c.status === "publicado") {
-      var ln = c.links || {};
-      var pl = el("p", { class: "suave" }, "Publicado: ");
-      var tem = false;
-      [["yt", "YouTube"], ["tt", "TikTok"]].forEach(function (par) {
-        if (ln[par[0]] && urlSegura(ln[par[0]])) {
-          if (tem) pl.appendChild(document.createTextNode(" · "));
-          pl.appendChild(link(ln[par[0]], par[1])); tem = true;
-        }
-      });
-      if (!tem) pl.appendChild(document.createTextNode("links ainda não registrados"));
-      info.appendChild(pl);
-    }
+    if (c.status === "publicado") info.appendChild(linksPublicados(c));
     return el("div", { class: "cartao aprov" }, caixa, info);
   }
 
@@ -1191,21 +1233,249 @@
   }
 
   // ---------- Hub de contas (nossas contas) ----------
+  // O dono edita pela função editar_conta (schema_v10); editor e leitor só veem.
+  var FORMATOS_CONTA = [["corte", "Corte"], ["top5", "Top 5"], ["explicador", "Explicador"]];
+  function marcador(rotulo, marcado) {
+    var i = el("input", { type: "checkbox", style: "width:auto;margin:0" });
+    i.checked = !!marcado;
+    return { input: i, label: el("label", { style: "display:flex;align-items:center;gap:8px;color:var(--texto)" }, i, rotulo) };
+  }
+  function editorConta(c, avisoOk) {
+    var form = el("form", { class: "cartao", novalidate: "novalidate" });
+    var ativa = marcador("Ativa: recebe vídeos na distribuição", c.ativa === true);
+    var handle = el("input", { value: c.handle || c.arroba || "", maxlength: "100", placeholder: "@nome", autocomplete: "off" });
+    var perfil = el("input", { value: c.perfil_chrome || "", maxlength: "100", placeholder: "deviceId do perfil no Claude in Chrome", autocomplete: "off", spellcheck: "false" });
+    var nicho = el("input", { value: c.nicho || "", maxlength: "300", placeholder: "palavras do assunto, separadas por vírgula" });
+    var meta = el("input", { type: "number", min: "0", max: "100", step: "1", value: c.meta_diaria == null ? "3" : String(c.meta_diaria) });
+    var horarios = el("input", { value: Array.isArray(c.horarios) ? c.horarios.join(", ") : "", placeholder: "12:00, 18:00, 21:00" });
+    var aceitos = Array.isArray(c.formatos) ? c.formatos : [];
+    var formatos = {};
+    var caixaFormatos = el("div", { class: "acoes", style: "margin-top:4px" });
+    FORMATOS_CONTA.forEach(function (f) {
+      var m = marcador(f[1], aceitos.indexOf(f[0]) >= 0);
+      formatos[f[0]] = m.input;
+      caixaFormatos.appendChild(m.label);
+    });
+    form.appendChild(el("div", { class: "barra-topo", style: "margin-bottom:0" },
+      el("h3", { texto: nomePlataforma(c.plataforma) + " · " + (c.nome || c.id) }),
+      el("span", { class: "etiqueta" + (c.ativa === true ? " st-clip-aprovado" : ""), texto: c.ativa === true ? "Ativa" : "Inativa" })
+    ));
+    form.appendChild(el("p", { class: "suave" }, "id " + c.id + (c.status ? " · cadastro: " + c.status : "") + " · ", link(c.link, "Abrir conta")));
+    form.appendChild(ativa.label);
+    [["Handle (@)", handle], ["Perfil do Chrome (deviceId)", perfil], ["Nicho (palavras no título dão preferência)", nicho],
+      ["Meta diária (alvo para equilibrar os posts)", meta], ["Horários em Brasília, separados por vírgula", horarios]].forEach(function (p) {
+      form.appendChild(el("label", null, p[0], p[1]));
+    });
+    form.appendChild(el("div", null, el("span", { class: "suave", texto: "Formatos aceitos" }), caixaFormatos));
+    var retorno = el("div");
+    if (avisoOk) retorno.appendChild(mensagem("ok", avisoOk));
+    form.appendChild(retorno);
+    if (papel !== "dono") {
+      Array.prototype.forEach.call(form.querySelectorAll("input"), function (i) { i.disabled = true; });
+      form.addEventListener("submit", function (e) { e.preventDefault(); });
+      return form;
+    }
+    var salvar = el("button", { type: "submit", class: "primario", texto: "Salvar conta" });
+    form.appendChild(salvar);
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      limpar(retorno);
+      var h = handle.value.trim();
+      var pc = perfil.value.trim();
+      var hs = horarios.value.split(/[\s,;]+/).filter(Boolean).map(function (x) { return /^\d:\d\d$/.test(x) ? "0" + x : x; });
+      var fs = FORMATOS_CONTA.map(function (f) { return f[0]; }).filter(function (f) { return formatos[f].checked; });
+      var m = Number(meta.value);
+      var erros = [];
+      if (h && !/^@[A-Za-z0-9_.-]+$/.test(h)) erros.push("handle no formato @nome");
+      if (!/^[A-Za-z0-9_.:-]*$/.test(pc)) erros.push("perfil do Chrome só com o deviceId");
+      if (!meta.value.trim() || !Number.isInteger(m) || m < 0 || m > 100) erros.push("meta de 0 a 100");
+      if (hs.length > 24 || hs.some(function (x) { return !/^([01]\d|2[0-3]):[0-5]\d$/.test(x); })) erros.push("horários em HH:MM");
+      if (!erros.length && ativa.input.checked && (!h || !pc || !fs.length || m < 1 || !hs.length)) {
+        erros.push("conta ativa precisa de handle, perfil do Chrome, um formato, meta de 1 ou mais e um horário");
+      }
+      if (erros.length) {
+        retorno.appendChild(mensagem("erro", "Confira: " + erros.join("; ") + "."));
+        return;
+      }
+      enviando(salvar, function () {
+        return sb.rpc("editar_conta", {
+          p_id: c.id, p_ativa: ativa.input.checked, p_handle: h, p_perfil_chrome: pc,
+          p_nicho: nicho.value.trim(), p_formatos: fs, p_meta_diaria: m, p_horarios: Array.from(new Set(hs)).sort()
+        }).then(function (r) {
+          if (r.error) throw r.error;
+          var nova = r.data && typeof r.data === "object" && !Array.isArray(r.data) && r.data.id === c.id ? r.data : null;
+          if (nova && form.parentNode) form.parentNode.replaceChild(editorConta(nova, "Configuração salva."), form);
+          else retorno.appendChild(mensagem("ok", "Configuração salva."));
+        });
+      }).catch(function (err) { retorno.appendChild(mensagem("erro", "Não foi possível salvar: " + traduzErro(err))); });
+    });
+    return form;
+  }
+
   function abaContas() {
-    return ler(sb.from("contas").select("*").order("plataforma", { ascending: true })).then(function (contas) {
-      var tab = el("table", null, el("thead", null, el("tr", null,
-        el("th", { texto: "Rede" }), el("th", { texto: "Nome" }), el("th", { texto: "Arroba" }), el("th", { texto: "Link" }), el("th", { texto: "Status" })
-      )));
-      var tb = el("tbody");
-      contas.forEach(function (c) {
-        tb.appendChild(el("tr", null,
-          el("td", { texto: nomePlataforma(c.plataforma) }), el("td", { texto: c.nome || "—" }), el("td", { texto: c.arroba || "—" }),
-          el("td", null, link(c.link, "Abrir")), el("td", { texto: c.status || "—" })
-        ));
+    return ler(sb.from("contas").select("*").order("plataforma", { ascending: true }).order("id", { ascending: true })).then(function (contas) {
+      var wrap = el("div", null, barraTopo("Hub de contas"),
+        el("p", { class: "suave", texto: "Cada vídeo aprovado vai para uma conta por rede, nunca para duas contas da mesma rede. A distribuição (a cada 15 min) usa só contas ativas que aceitam o formato do vídeo; palavras do nicho no título dão preferência e a meta diária equilibra os posts. O perfil do Chrome diz ao publicador em qual navegador entrar." }));
+      if (!contas.length) {
+        wrap.appendChild(vazio("Nenhuma conta cadastrada", "O sync_hub.py cadastra as contas do contas.json a cada 15 minutos."));
+        return wrap;
+      }
+      if (!("ativa" in contas[0])) wrap.appendChild(el("div", { class: "msg aviso", texto: "O banco ainda não tem a configuração das contas: falta aplicar o schema_v10.sql." }));
+      else if (papel !== "dono") wrap.appendChild(el("div", { class: "msg aviso", texto: "Só o dono edita as contas; aqui você vê a configuração." }));
+      var grade = el("div", { class: "grade-clips" });
+      contas.forEach(function (c) { grade.appendChild(editorConta(c)); });
+      wrap.appendChild(grade);
+      return wrap;
+    });
+  }
+
+  // ---------- Agenda: hoje e os seis dias seguintes (Brasília) ----------
+  function diaBrasilia(valor) {
+    if (!valor) return "";
+    var d = valor instanceof Date ? valor : new Date(valor);
+    if (isNaN(d)) return "";
+    return new Intl.DateTimeFormat("sv-SE", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+  }
+  function horaBrasilia(valor) {
+    if (!valor) return "";
+    var d = new Date(valor);
+    if (isNaN(d)) return "";
+    return d.toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" });
+  }
+  function rotuloDia(dia, i) {
+    var p = dia.split("-");
+    var semana = new Date(dia + "T12:00:00-03:00").toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", weekday: "long" });
+    var nome = i === 0 ? "Hoje" : i === 1 ? "Amanhã" : semana.charAt(0).toUpperCase() + semana.slice(1);
+    return nome + " · " + p[2] + "/" + p[1];
+  }
+  // publicado: marcar_publicado zera publicar_em e grava atualizado_em (horário aproximado)
+  function quandoDe(c) { return c.status === "publicado" ? c.atualizado_em : c.publicar_em; }
+  function msDe(c) {
+    var t = quandoDe(c) ? new Date(quandoDe(c)).getTime() : NaN;
+    return isNaN(t) ? Infinity : t;
+  }
+  function lerPaginas(criar, pagina, acumulado) {
+    pagina = pagina || 0;
+    acumulado = acumulado || [];
+    return ler(criar().range(pagina * 500, pagina * 500 + 499)).then(function (dados) {
+      var todos = acumulado.concat(dados);
+      return dados.length < 500 ? todos : lerPaginas(criar, pagina + 1, todos);
+    });
+  }
+  // URLs assinadas (1 h) em lotes de 100; se o Storage falhar, a agenda abre sem capas.
+  function urlsAssinadas(caminhos) {
+    var unicos = Array.from(new Set(caminhos.filter(function (p) { return typeof p === "string" && p; })));
+    var lotes = [];
+    for (var i = 0; i < unicos.length; i += 100) {
+      lotes.push(Promise.resolve(sb.storage.from("videos").createSignedUrls(unicos.slice(i, i + 100), 3600))
+        .catch(function () { return { data: [] }; }));
+    }
+    return Promise.all(lotes).then(function (rs) {
+      var urls = {};
+      rs.forEach(function (r) {
+        ((r && r.data) || []).forEach(function (u) {
+          var ok = u && !u.error && urlSegura(u.signedUrl);
+          if (ok) urls[u.path] = ok;
+        });
       });
-      tab.appendChild(tb);
-      return el("div", { class: "cartao" }, el("h2", null, el("span", { class: "titulo", texto: "Hub de contas" })),
-        el("div", { class: "tabela-rolavel" }, tab));
+      return urls;
+    });
+  }
+
+  function abaAgenda() {
+    var agora = Date.now();
+    var hoje = diaBrasilia(new Date(agora));
+    var inicio = new Date(hoje + "T00:00:00-03:00");
+    var fim = new Date(inicio.getTime() + 7 * 86400000);
+    var dias = [];
+    for (var i = 0; i < 7; i++) dias.push(diaBrasilia(new Date(inicio.getTime() + i * 86400000 + 12 * 3600000)));
+    return Promise.all([
+      ler(sb.from("contas").select("*").order("plataforma", { ascending: true }).order("id", { ascending: true })).catch(function () { return []; }),
+      // aprovados com horário até o fim da semana (inclui atrasados de dias anteriores)
+      lerPaginas(function () { return sb.from("clips").select("*").eq("status", "aprovado").lt("publicar_em", fim.toISOString()).order("publicar_em", { ascending: true }).order("id", { ascending: true }); }),
+      lerPaginas(function () { return sb.from("clips").select("*").eq("status", "publicado").gte("atualizado_em", inicio.toISOString()).order("atualizado_em", { ascending: true }).order("id", { ascending: true }); }),
+      lerPaginas(function () { return sb.from("clips").select("*").eq("status", "aprovado").is("publicar_em", null).order("id", { ascending: true }); })
+    ]).then(function (res) {
+      var contas = res[0], agendados = res[1], publicados = res[2], semHorario = res[3];
+      var porId = {};
+      contas.forEach(function (x) { if (x && x.id != null) porId[x.id] = x; });
+      var atrasados = agendados.filter(function (c) { return msDe(c) < inicio.getTime(); });
+      var naSemana = agendados.filter(function (c) { return msDe(c) >= inicio.getTime(); }).concat(publicados);
+      return urlsAssinadas(agendados.concat(publicados, semHorario).map(function (c) { return c.capa_path; })).then(function (urls) {
+        function capaDe(c) {
+          var estilo = "width:54px;height:96px;object-fit:cover;border-radius:6px;flex:none;display:block;background:var(--borda)";
+          var u = urls[c.capa_path];
+          if (!u) return el("div", { class: "vazio", style: estilo, "aria-hidden": "true" });
+          return el("img", { src: u, alt: "Capa do corte", loading: "lazy", style: estilo,
+            onerror: function (ev) { ev.target.style.visibility = "hidden"; } });
+        }
+        function itemAgenda(c, opcoes) {
+          opcoes = opcoes || {};
+          var a = c.avaliacao || {};
+          var publicado = c.status === "publicado";
+          var quando = quandoDe(c);
+          var passou = !publicado && msDe(c) <= agora;
+          var horario = !quando ? "sem horário" : (opcoes.comData ? dataHora(quando) : horaBrasilia(quando));
+          var texto = el("div", { style: "min-width:0;flex:1" },
+            el("div", { class: "linha-selos", style: "margin-top:0" },
+              el("span", { class: "num", texto: (publicado && quando ? "≈ " : "") + horario }),
+              el("span", { class: "etiqueta st-clip-" + c.status, texto: ROTULO_STATUS[c.status] || c.status }),
+              passou ? el("span", { class: "etiqueta", texto: "horário passou: sai assim que possível" }) : null
+            ),
+            el("p", { style: "margin:4px 0;font-weight:600", texto: a.titulo || c.titulo || "Sem título" })
+          );
+          if (opcoes.contas) {
+            var selos = selosContas(c, contas);
+            if (selos) texto.appendChild(selos);
+          }
+          if (publicado) texto.appendChild(linksPublicados(c));
+          return el("div", { class: "item", style: "display:flex;gap:12px;align-items:flex-start" }, capaDe(c), texto);
+        }
+        function grupo(titulo, resumo, lista, opcoes) {
+          var g = el("div", { style: "margin-top:12px" });
+          if (titulo) g.appendChild(el("h4", { class: "rel-sub", texto: titulo }));
+          if (resumo) g.appendChild(el("p", { class: "suave", texto: resumo }));
+          lista.slice().sort(function (x, y) { return msDe(x) - msDe(y) || String(x.id).localeCompare(String(y.id)); })
+            .forEach(function (c) { g.appendChild(itemAgenda(c, opcoes)); });
+          return g;
+        }
+
+        var wrap = el("div", null, barraTopo("Agenda · próximos 7 dias"),
+          el("p", { class: "suave", texto: "Horários de Brasília, por conta. Cada aprovado vai para uma conta por rede (a distribuição roda a cada 15 min). Publicados aparecem com o horário aproximado (≈)." }),
+          el("p", { class: "suave num", texto: naSemana.filter(function (c) { return c.status === "aprovado"; }).length + " agendado(s) · " +
+            publicados.length + " publicado(s) hoje · " + semHorario.length + " aprovado(s) sem horário" +
+            (atrasados.length ? " · " + atrasados.length + " atrasado(s)" : "") }));
+        if (atrasados.length) {
+          var ca = el("div", { class: "cartao" }, el("h3", { texto: "Atrasados (" + atrasados.length + ")" }),
+            el("p", { class: "suave", texto: "O horário já passou e o vídeo ainda não foi publicado." }));
+          ca.appendChild(grupo(null, null, atrasados, { contas: true, comData: true }));
+          wrap.appendChild(ca);
+        }
+        if (semHorario.length) {
+          var cs = el("div", { class: "cartao" }, el("h3", { texto: "Aprovados sem horário (" + semHorario.length + ")" }),
+            el("p", { class: "suave", texto: "Esperam o comando de publicação (aba Aprovação ou Telegram)." }));
+          cs.appendChild(grupo(null, null, semHorario, { contas: true }));
+          wrap.appendChild(cs);
+        }
+        dias.forEach(function (dia, n) {
+          var doDia = naSemana.filter(function (c) { return diaBrasilia(quandoDe(c)) === dia; });
+          var secao = el("div", { class: "cartao" }, el("h3", { texto: rotuloDia(dia, n) }));
+          contas.forEach(function (conta) {
+            var lista = doDia.filter(function (c) { return idsDestino(c).indexOf(String(conta.id)) >= 0; });
+            if (!lista.length && conta.ativa !== true) return;
+            var meta = Number(conta.meta_diaria);
+            var hs = Array.isArray(conta.horarios) ? conta.horarios.filter(function (h) { return typeof h === "string"; }) : [];
+            var resumo = lista.length + (meta > 0 ? " de " + meta + " (meta do dia)" : " post(s)") +
+              (hs.length ? " · horários " + hs.join(", ") : "") + (conta.ativa === true ? "" : " · conta inativa");
+            secao.appendChild(grupo(nomePlataforma(conta.plataforma) + " · " + (conta.nome || conta.id), resumo, lista));
+          });
+          var semConta = doDia.filter(function (c) { return !idsDestino(c).some(function (id) { return porId[id]; }); });
+          if (semConta.length) secao.appendChild(grupo("Sem conta definida", "Aguardando a distribuição (ou publicado antes dela).", semConta, { contas: true }));
+          if (!doDia.length) secao.appendChild(el("p", { class: "suave", texto: "Nada agendado nem publicado neste dia." }));
+          wrap.appendChild(secao);
+        });
+        return wrap;
+      });
     });
   }
 
