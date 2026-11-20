@@ -61,7 +61,10 @@
     return p.length === 3 ? p[2] + "/" + p[1] + "/" + p[0] : String(d);
   }
   function nomePlataforma(p) {
-    return { youtube: "YouTube", tiktok: "TikTok", kwai: "Kwai" }[p] || p || "—";
+    return { youtube: "YouTube", tiktok: "TikTok", kwai: "Kwai", twitch: "Twitch", kick: "Kick" }[p] || p || "—";
+  }
+  function plataformaFonte(c) {
+    return c.plataforma === "kick" || /^kick:/.test(c.login || c.canal || "") ? "kick" : "twitch";
   }
   function mensagem(tipo, texto) { return el("div", { class: "msg " + tipo, texto: texto, role: "alert" }); }
   function traduzErro(e) {
@@ -687,7 +690,7 @@
     return el("div", { class: "cartao vazio-msg" }, el("h3", { texto: titulo }), el("p", { class: "suave", texto: texto }));
   }
 
-  // ---------- Contas (canais da Twitch) ----------
+  // ---------- Contas (canais da Twitch e da Kick) ----------
   var fCanais = { vis: "vivo", marca: "todas", grupo: "todos", busca: "" };
 
   function abaCanais() {
@@ -695,7 +698,7 @@
       var wrap = el("div");
       wrap.appendChild(barraTopo("Canais jogando GTA"));
       if (!canais.length) {
-        wrap.appendChild(vazio("Ainda não há canais", "A cada hora o Claude busca canais da Twitch jogando GTA. Volte daqui a pouco."));
+        wrap.appendChild(vazio("Ainda não há canais", "A rotina busca canais da Twitch e da Kick jogando GTA. Volte daqui a pouco."));
         return wrap;
       }
       var lista = el("div", { class: "grade-canais" });
@@ -739,12 +742,15 @@
 
   function cartaoCanal(c, redesenhar) {
     var g = grupoDe(c);
+    var plataforma = plataformaFonte(c);
+    var login = plataforma === "kick" ? String(c.login || "").replace(/^kick:/, "") : c.login;
+    var dominio = plataforma === "kick" ? "kick.com/" : "www.twitch.tv/";
     var capa = c.ao_vivo && urlSegura(c.thumb_url) ? imgSegura(c.thumb_url, "Miniatura da live", "canal-thumb") : null;
     var cab = el("div", { class: "canal-cab" },
       imgSegura(c.avatar_url, "", "avatar"),
       el("div", { class: "canal-nome" },
         el("strong", { texto: c.nome || c.login }),
-        el("span", { class: "suave", texto: "@" + c.login })
+        el("span", { class: "suave", texto: "@" + login })
       ),
       c.ao_vivo ? el("span", { class: "etiqueta ao-vivo", texto: "AO VIVO" }) : el("span", { class: "etiqueta", texto: "Offline" })
     );
@@ -756,8 +762,9 @@
       info.appendChild(el("p", { class: "suave num", texto: num(c.seguidores) + " seguidores" }));
     }
     var linha = el("div", { class: "linha-selos" });
+    linha.appendChild(el("span", { class: "etiqueta", texto: nomePlataforma(plataforma) }));
     if (g) linha.appendChild(el("span", { class: "etiqueta grupo-" + g.id, texto: g.nome }));
-    linha.appendChild(link("https://www.twitch.tv/" + encodeURIComponent(c.login), "twitch.tv/" + c.login));
+    linha.appendChild(link("https://" + dominio + encodeURIComponent(login), dominio.replace(/^www\./, "") + login));
     info.appendChild(linha);
 
     var acoes = el("div", { class: "acoes" });
@@ -845,6 +852,19 @@
   }
 
   function playerClip(c, caixa) {
+    if (plataformaFonte(c) === "kick") {
+      var miniatura = imgSegura(c.thumb_url, "Miniatura do clipe da Kick", "clip-thumb");
+      if (urlSegura(c.url)) {
+        var abrir = link(c.url, "");
+        limpar(abrir);
+        abrir.setAttribute("aria-label", "Abrir na Kick");
+        abrir.appendChild(miniatura);
+        caixa.appendChild(abrir);
+      } else {
+        caixa.appendChild(miniatura);
+      }
+      return;
+    }
     var slug = c.embed_slug;
     caixa.appendChild(imgSegura(c.thumb_url, "", "clip-thumb"));
     if (!slug) return;
@@ -887,7 +907,7 @@
       a.resumo ? el("p", { texto: String(a.resumo) }) : null,
       a.gancho ? el("p", { class: "suave", texto: "Gancho: " + a.gancho }) : null,
       el("p", { class: "suave num", texto: nomeCanal + " · " + num(c.views) + " views · " + duracaoTxt(c.duracao) + " · há " + idadeTxt(c.criado_em) }),
-      urlSegura(c.url) ? el("p", { class: "suave" }, link(c.url, "Abrir na Twitch")) : null
+      urlSegura(c.url) ? el("p", { class: "suave" }, link(c.url, "Abrir na " + nomePlataforma(plataformaFonte(c)))) : null
     );
     if (c.status === "aprovado" && c.publicar_em && dataHora(c.publicar_em)) {
       corpo.appendChild(el("p", { class: "suave", texto: "Publicação: " + dataHora(c.publicar_em) + " (Brasília)" }));
