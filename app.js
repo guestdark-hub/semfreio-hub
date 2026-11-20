@@ -64,7 +64,12 @@
     return { youtube: "YouTube", tiktok: "TikTok", kwai: "Kwai", twitch: "Twitch", kick: "Kick" }[p] || p || "—";
   }
   function plataformaFonte(c) {
+    if (c.plataforma === "youtube" || /^yt:/.test(c.login || c.canal || "")) return "youtube";
     return c.plataforma === "kick" || /^kick:/.test(c.login || c.canal || "") ? "kick" : "twitch";
+  }
+  function abrirFonte(c) {
+    var p = plataformaFonte(c);
+    return "Abrir " + (p === "youtube" ? "no " : "na ") + nomePlataforma(p);
   }
   function mensagem(tipo, texto) { return el("div", { class: "msg " + tipo, texto: texto, role: "alert" }); }
   function traduzErro(e) {
@@ -690,7 +695,7 @@
     return el("div", { class: "cartao vazio-msg" }, el("h3", { texto: titulo }), el("p", { class: "suave", texto: texto }));
   }
 
-  // ---------- Contas (canais da Twitch e da Kick) ----------
+  // ---------- Contas (canais da Twitch, Kick e YouTube) ----------
   var fCanais = { vis: "vivo", marca: "todas", grupo: "todos", busca: "" };
 
   function abaCanais() {
@@ -698,7 +703,7 @@
       var wrap = el("div");
       wrap.appendChild(barraTopo("Canais jogando GTA"));
       if (!canais.length) {
-        wrap.appendChild(vazio("Ainda não há canais", "A rotina busca canais da Twitch e da Kick jogando GTA. Volte daqui a pouco."));
+        wrap.appendChild(vazio("Ainda não há canais", "A rotina busca canais da Twitch, Kick e YouTube jogando GTA. Volte daqui a pouco."));
         return wrap;
       }
       var lista = el("div", { class: "grade-canais" });
@@ -743,14 +748,15 @@
   function cartaoCanal(c, redesenhar) {
     var g = grupoDe(c);
     var plataforma = plataformaFonte(c);
-    var login = plataforma === "kick" ? String(c.login || "").replace(/^kick:/, "") : c.login;
+    var login = String(c.login || "").replace(plataforma === "youtube" ? /^yt:/ : /^kick:/, "");
     var dominio = plataforma === "kick" ? "kick.com/" : "www.twitch.tv/";
+    var urlCanal = plataforma === "youtube" ? (urlSegura(c.url) || "https://www.youtube.com/channel/" + encodeURIComponent(login)) : "https://" + dominio + encodeURIComponent(login);
     var capa = c.ao_vivo && urlSegura(c.thumb_url) ? imgSegura(c.thumb_url, "Miniatura da live", "canal-thumb") : null;
     var cab = el("div", { class: "canal-cab" },
       imgSegura(c.avatar_url, "", "avatar"),
       el("div", { class: "canal-nome" },
         el("strong", { texto: c.nome || c.login }),
-        el("span", { class: "suave", texto: "@" + login })
+        el("span", { class: "suave", texto: plataforma === "youtube" ? "YouTube" : "@" + login })
       ),
       c.ao_vivo ? el("span", { class: "etiqueta ao-vivo", texto: "AO VIVO" }) : el("span", { class: "etiqueta", texto: "Offline" })
     );
@@ -764,7 +770,7 @@
     var linha = el("div", { class: "linha-selos" });
     linha.appendChild(el("span", { class: "etiqueta", texto: nomePlataforma(plataforma) }));
     if (g) linha.appendChild(el("span", { class: "etiqueta grupo-" + g.id, texto: g.nome }));
-    linha.appendChild(link("https://" + dominio + encodeURIComponent(login), dominio.replace(/^www\./, "") + login));
+    linha.appendChild(link(urlCanal, plataforma === "youtube" ? "Abrir canal no YouTube" : dominio.replace(/^www\./, "") + login));
     info.appendChild(linha);
 
     var acoes = el("div", { class: "acoes" });
@@ -852,12 +858,12 @@
   }
 
   function playerClip(c, caixa) {
-    if (plataformaFonte(c) === "kick") {
-      var miniatura = imgSegura(c.thumb_url, "Miniatura do clipe da Kick", "clip-thumb");
+    if (plataformaFonte(c) === "kick" || plataformaFonte(c) === "youtube") {
+      var miniatura = imgSegura(c.thumb_url, "Miniatura do clipe · " + nomePlataforma(plataformaFonte(c)), "clip-thumb");
       if (urlSegura(c.url)) {
         var abrir = link(c.url, "");
         limpar(abrir);
-        abrir.setAttribute("aria-label", "Abrir na Kick");
+        abrir.setAttribute("aria-label", abrirFonte(c));
         abrir.appendChild(miniatura);
         caixa.appendChild(abrir);
       } else {
@@ -900,6 +906,7 @@
       el("div", { class: "linha-selos" },
         el("span", { class: "nota num " + sl.cls, texto: String(c.nota) }),
         el("span", { class: "etiqueta " + sl.cls, texto: sl.txt }),
+        el("span", { class: "etiqueta", texto: nomePlataforma(plataformaFonte(c)) }),
         a.classificacao ? el("span", { class: "etiqueta", texto: String(a.classificacao) }) : null,
         seloTelegram(c)
       ),
@@ -907,7 +914,7 @@
       a.resumo ? el("p", { texto: String(a.resumo) }) : null,
       a.gancho ? el("p", { class: "suave", texto: "Gancho: " + a.gancho }) : null,
       el("p", { class: "suave num", texto: nomeCanal + " · " + num(c.views) + " views · " + duracaoTxt(c.duracao) + " · há " + idadeTxt(c.criado_em) }),
-      urlSegura(c.url) ? el("p", { class: "suave" }, link(c.url, "Abrir na " + nomePlataforma(plataformaFonte(c)))) : null
+      urlSegura(c.url) ? el("p", { class: "suave" }, link(c.url, abrirFonte(c))) : null
     );
     if (c.status === "aprovado" && c.publicar_em && dataHora(c.publicar_em)) {
       corpo.appendChild(el("p", { class: "suave", texto: "Publicação: " + dataHora(c.publicar_em) + " (Brasília)" }));
